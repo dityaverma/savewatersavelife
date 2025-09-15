@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -19,9 +19,11 @@ interface SampleData {
   depth: number
   collectionDate: string
   metals: {
+    arsenic: number // Added arsenic and mercury as per document
     lead: number
     cadmium: number
     chromium: number
+    mercury: number
     copper: number
     zinc: number
     iron: number
@@ -39,9 +41,11 @@ export default function DataEntryPage() {
     depth: 0,
     collectionDate: "",
     metals: {
+      arsenic: 0, // Added arsenic and mercury
       lead: 0,
       cadmium: 0,
       chromium: 0,
+      mercury: 0,
       copper: 0,
       zinc: 0,
       iron: 0,
@@ -51,6 +55,30 @@ export default function DataEntryPage() {
   })
   const [csvData, setCsvData] = useState("")
   const router = useRouter()
+
+  useEffect(() => {
+    const storedSamples = localStorage.getItem("sampleData")
+    if (storedSamples) {
+      setSamples(JSON.parse(storedSamples))
+    }
+
+    const tempSample = localStorage.getItem("tempSample")
+    if (tempSample) {
+      setCurrentSample(JSON.parse(tempSample))
+    }
+  }, [])
+
+  useEffect(() => {
+    if (currentSample.sampleId || Object.values(currentSample.metals || {}).some((v) => v > 0)) {
+      localStorage.setItem("tempSample", JSON.stringify(currentSample))
+    }
+  }, [currentSample])
+
+  useEffect(() => {
+    if (samples.length > 0) {
+      localStorage.setItem("sampleData", JSON.stringify(samples))
+    }
+  }, [samples])
 
   const addSample = () => {
     if (currentSample.sampleId && currentSample.metals) {
@@ -66,9 +94,11 @@ export default function DataEntryPage() {
         depth: 0,
         collectionDate: "",
         metals: {
+          arsenic: 0,
           lead: 0,
           cadmium: 0,
           chromium: 0,
+          mercury: 0,
           copper: 0,
           zinc: 0,
           iron: 0,
@@ -76,11 +106,18 @@ export default function DataEntryPage() {
           nickel: 0,
         },
       })
+      localStorage.removeItem("tempSample")
     }
   }
 
   const removeSample = (id: string) => {
-    setSamples(samples.filter((sample) => sample.id !== id))
+    const updatedSamples = samples.filter((sample) => sample.id !== id)
+    setSamples(updatedSamples)
+    if (updatedSamples.length === 0) {
+      localStorage.removeItem("sampleData")
+    } else {
+      localStorage.setItem("sampleData", JSON.stringify(updatedSamples))
+    }
   }
 
   const processCsvData = () => {
@@ -99,14 +136,16 @@ export default function DataEntryPage() {
           depth: Number.parseFloat(values[3]) || 0,
           collectionDate: values[4] || new Date().toISOString().split("T")[0],
           metals: {
-            lead: Number.parseFloat(values[5]) || 0,
-            cadmium: Number.parseFloat(values[6]) || 0,
-            chromium: Number.parseFloat(values[7]) || 0,
-            copper: Number.parseFloat(values[8]) || 0,
-            zinc: Number.parseFloat(values[9]) || 0,
-            iron: Number.parseFloat(values[10]) || 0,
-            manganese: Number.parseFloat(values[11]) || 0,
-            nickel: Number.parseFloat(values[12]) || 0,
+            arsenic: Number.parseFloat(values[5]) || 0, // Updated CSV mapping
+            lead: Number.parseFloat(values[6]) || 0,
+            cadmium: Number.parseFloat(values[7]) || 0,
+            chromium: Number.parseFloat(values[8]) || 0,
+            mercury: Number.parseFloat(values[9]) || 0,
+            copper: Number.parseFloat(values[10]) || 0,
+            zinc: Number.parseFloat(values[11]) || 0,
+            iron: Number.parseFloat(values[12]) || 0,
+            manganese: Number.parseFloat(values[13]) || 0,
+            nickel: Number.parseFloat(values[14]) || 0,
           },
         }
         newSamples.push(sample)
@@ -124,8 +163,6 @@ export default function DataEntryPage() {
       alert("Please add sample data first.")
       return
     }
-    // Store samples in localStorage for calculations page
-    localStorage.setItem("sampleData", JSON.stringify(samples))
     router.push("/dashboard/calculations")
   }
 
@@ -223,11 +260,21 @@ export default function DataEntryPage() {
               <CardDescription>Enter metal concentrations in mg/L</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 {Object.entries(currentSample.metals || {}).map(([metal, value]) => (
                   <div key={metal} className="space-y-2">
                     <Label htmlFor={metal} className="capitalize">
-                      {metal} (mg/L)
+                      {metal === "arsenic"
+                        ? "Arsenic (As)"
+                        : metal === "lead"
+                          ? "Lead (Pb)"
+                          : metal === "cadmium"
+                            ? "Cadmium (Cd)"
+                            : metal === "chromium"
+                              ? "Chromium (Cr)"
+                              : metal === "mercury"
+                                ? "Mercury (Hg)"
+                                : `${metal} (mg/L)`}
                     </Label>
                     <Input
                       id={metal}
@@ -263,8 +310,8 @@ export default function DataEntryPage() {
             <CardHeader>
               <CardTitle>CSV Data Upload</CardTitle>
               <CardDescription>
-                Paste CSV data with columns: Sample ID, Latitude, Longitude, Depth, Date, Lead, Cadmium, Chromium,
-                Copper, Zinc, Iron, Manganese, Nickel
+                Paste CSV data with columns: Sample ID, Latitude, Longitude, Depth, Date, Arsenic, Lead, Cadmium,
+                Chromium, Mercury, Copper, Zinc, Iron, Manganese, Nickel
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -272,8 +319,8 @@ export default function DataEntryPage() {
                 <Label htmlFor="csvData">CSV Data</Label>
                 <Textarea
                   id="csvData"
-                  placeholder="Sample ID,Latitude,Longitude,Depth,Date,Lead,Cadmium,Chromium,Copper,Zinc,Iron,Manganese,Nickel
-GW-001,40.7128,-74.0060,15.5,2024-01-15,0.05,0.02,0.1,0.3,1.2,2.5,0.8,0.04"
+                  placeholder="Sample ID,Latitude,Longitude,Depth,Date,Arsenic,Lead,Cadmium,Chromium,Mercury,Copper,Zinc,Iron,Manganese,Nickel
+GW-001,40.7128,-74.0060,15.5,2024-01-15,0.015,0.008,0.002,0.060,0.0005,0.3,1.2,2.5,0.8,0.04"
                   className="min-h-[200px] font-mono text-sm"
                   value={csvData}
                   onChange={(e) => setCsvData(e.target.value)}
@@ -310,8 +357,8 @@ GW-001,40.7128,-74.0060,15.5,2024-01-15,0.05,0.02,0.1,0.3,1.2,2.5,0.8,0.04"
                       Depth: {sample.depth}m • Date: {sample.collectionDate}
                     </div>
                     <div className="text-sm text-muted-foreground mt-1">
-                      Pb: {sample.metals.lead} | Cd: {sample.metals.cadmium} | Cr: {sample.metals.chromium} | Cu:{" "}
-                      {sample.metals.copper}
+                      As: {sample.metals.arsenic} | Pb: {sample.metals.lead} | Cd: {sample.metals.cadmium} | Cr:{" "}
+                      {sample.metals.chromium} | Hg: {sample.metals.mercury}
                     </div>
                   </div>
                   <Button

@@ -5,7 +5,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { MapPin, Layers, Download, ZoomIn, ZoomOut, RotateCcw } from "lucide-react"
+import { MapPin, Layers, Download } from "lucide-react"
+import dynamic from "next/dynamic"
+
+const MapContainer = dynamic(() => import("react-leaflet").then((mod) => mod.MapContainer), { ssr: false })
+const TileLayer = dynamic(() => import("react-leaflet").then((mod) => mod.TileLayer), { ssr: false })
+const Marker = dynamic(() => import("react-leaflet").then((mod) => mod.Marker), { ssr: false })
+const Popup = dynamic(() => import("react-leaflet").then((mod) => mod.Popup), { ssr: false })
+const CircleMarker = dynamic(() => import("react-leaflet").then((mod) => mod.CircleMarker), { ssr: false })
 
 interface SampleData {
   id: string
@@ -15,9 +22,11 @@ interface SampleData {
   depth: number
   collectionDate: string
   metals: {
+    arsenic: number
     lead: number
     cadmium: number
     chromium: number
+    mercury: number
     copper: number
     zinc: number
     iron: number
@@ -28,47 +37,64 @@ interface SampleData {
   riskLevel?: "Low" | "Moderate" | "High" | "Critical"
 }
 
+interface CalculationResults {
+  sampleId: string
+  hpi: number
+  mpi: number
+  hei: number
+  cf: { [key: string]: number }
+  pli: number
+  classification: string
+  riskLevel: "Low" | "Moderate" | "High" | "Critical"
+}
+
 export default function VisualizationPage() {
   const [samples, setSamples] = useState<SampleData[]>([])
+  const [results, setResults] = useState<CalculationResults[]>([])
   const [selectedMetal, setSelectedMetal] = useState("hpi")
   const [mapView, setMapView] = useState("satellite")
   const [showHeatmap, setShowHeatmap] = useState(true)
+  const [isClient, setIsClient] = useState(false)
 
   useEffect(() => {
-    // Load sample data and results
+    setIsClient(true)
+  }, [])
+
+  useEffect(() => {
     const storedSamples = localStorage.getItem("sampleData")
+    const storedResults = localStorage.getItem("calculationResults")
+
     if (storedSamples) {
       const parsedSamples = JSON.parse(storedSamples)
-      // Add mock HPI and risk level data for visualization
-      const samplesWithResults = parsedSamples.map((sample: SampleData, index: number) => ({
+      setSamples(parsedSamples)
+    }
+
+    if (storedResults) {
+      const parsedResults = JSON.parse(storedResults)
+      setResults(parsedResults)
+
+      // Merge results with samples
+      if (storedSamples) {
+        const parsedSamples = JSON.parse(storedSamples)
+        const samplesWithResults = parsedSamples.map((sample: SampleData) => {
+          const result = parsedResults.find((r: CalculationResults) => r.sampleId === sample.sampleId)
+          return {
+            ...sample,
+            hpi: result?.hpi || 0,
+            riskLevel: result?.riskLevel || "Low",
+          }
+        })
+        setSamples(samplesWithResults)
+      }
+    } else if (storedSamples) {
+      // Generate mock data for demonstration if no results
+      const parsedSamples = JSON.parse(storedSamples)
+      const samplesWithResults = parsedSamples.map((sample: SampleData) => ({
         ...sample,
-        hpi: 25 + Math.random() * 100, // Mock HPI values
-        riskLevel: ["Low", "Moderate", "High", "Critical"][Math.floor(Math.random() * 4)] as any,
+        hpi: 25 + Math.random() * 75,
+        riskLevel: ["Low", "Moderate", "High"][Math.floor(Math.random() * 3)] as any,
       }))
       setSamples(samplesWithResults)
-    } else {
-      // Generate mock data for demonstration
-      const mockSamples: SampleData[] = Array.from({ length: 15 }, (_, i) => ({
-        id: `mock-${i}`,
-        sampleId: `GW-2024-${String(i + 1).padStart(3, "0")}`,
-        latitude: 40.7128 + (Math.random() - 0.5) * 0.1,
-        longitude: -74.006 + (Math.random() - 0.5) * 0.1,
-        depth: 10 + Math.random() * 20,
-        collectionDate: "2024-01-15",
-        metals: {
-          lead: Math.random() * 0.1,
-          cadmium: Math.random() * 0.01,
-          chromium: Math.random() * 0.1,
-          copper: Math.random() * 2,
-          zinc: Math.random() * 3,
-          iron: Math.random() * 1,
-          manganese: Math.random() * 0.5,
-          nickel: Math.random() * 0.1,
-        },
-        hpi: 25 + Math.random() * 100,
-        riskLevel: ["Low", "Moderate", "High", "Critical"][Math.floor(Math.random() * 4)] as any,
-      }))
-      setSamples(mockSamples)
     }
   }, [])
 
@@ -92,8 +118,27 @@ export default function VisualizationPage() {
     return sample.metals[metal as keyof typeof sample.metals] || 0
   }
 
+  const getMapCenter = (): [number, number] => {
+    if (samples.length === 0) return [40.7128, -74.006]
+
+    const avgLat = samples.reduce((sum, s) => sum + s.latitude, 0) / samples.length
+    const avgLng = samples.reduce((sum, s) => sum + s.longitude, 0) / samples.length
+    return [avgLat, avgLng]
+  }
+
+  if (!isClient) {
+    return <div>Loading map...</div>
+  }
+
   return (
     <div className="space-y-6">
+      <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossOrigin=""
+      />
+
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-3xl font-bold">GIS Visualization</h1>
@@ -125,9 +170,11 @@ export default function VisualizationPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="hpi">HPI Index</SelectItem>
+                  <SelectItem value="arsenic">Arsenic (As)</SelectItem>
                   <SelectItem value="lead">Lead (Pb)</SelectItem>
                   <SelectItem value="cadmium">Cadmium (Cd)</SelectItem>
                   <SelectItem value="chromium">Chromium (Cr)</SelectItem>
+                  <SelectItem value="mercury">Mercury (Hg)</SelectItem>
                   <SelectItem value="copper">Copper (Cu)</SelectItem>
                   <SelectItem value="zinc">Zinc (Zn)</SelectItem>
                   <SelectItem value="iron">Iron (Fe)</SelectItem>
@@ -162,7 +209,7 @@ export default function VisualizationPage() {
                     onChange={(e) => setShowHeatmap(e.target.checked)}
                     className="rounded border-gray-300"
                   />
-                  <span className="text-sm">Heatmap Overlay</span>
+                  <span className="text-sm">Risk Level Colors</span>
                 </label>
                 <label className="flex items-center space-x-2">
                   <input type="checkbox" defaultChecked className="rounded border-gray-300" />
@@ -172,21 +219,6 @@ export default function VisualizationPage() {
                   <input type="checkbox" className="rounded border-gray-300" />
                   <span className="text-sm">Contamination Zones</span>
                 </label>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Map Tools</label>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  <ZoomIn className="h-4 w-4" />
-                </Button>
-                <Button variant="outline" size="sm">
-                  <ZoomOut className="h-4 w-4" />
-                </Button>
-                <Button variant="outline" size="sm">
-                  <RotateCcw className="h-4 w-4" />
-                </Button>
               </div>
             </div>
           </CardContent>
@@ -204,107 +236,67 @@ export default function VisualizationPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {/* Mock Map Display */}
-            <div className="relative bg-gradient-to-br from-blue-100 to-green-100 rounded-lg h-[500px] overflow-hidden">
-              {/* Map Background Pattern */}
-              <div className="absolute inset-0 opacity-20">
-                <svg width="100%" height="100%" className="text-gray-400">
-                  <defs>
-                    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="currentColor" strokeWidth="1" />
-                    </pattern>
-                  </defs>
-                  <rect width="100%" height="100%" fill="url(#grid)" />
-                </svg>
-              </div>
+            <div className="h-[500px] rounded-lg overflow-hidden">
+              {samples.length > 0 ? (
+                <MapContainer center={getMapCenter()} zoom={13} style={{ height: "100%", width: "100%" }}>
+                  <TileLayer
+                    url={
+                      mapView === "satellite"
+                        ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                        : mapView === "terrain"
+                          ? "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+                          : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    }
+                    attribution={
+                      mapView === "satellite"
+                        ? "&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
+                        : mapView === "terrain"
+                          ? 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>'
+                          : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    }
+                  />
 
-              {/* Sample Points */}
-              {samples.map((sample, index) => {
-                const x = 50 + (sample.longitude + 74.006) * 2000
-                const y = 250 - (sample.latitude - 40.7128) * 2000
-                const value = getMetalValue(sample, selectedMetal)
-                const size = Math.max(8, Math.min(20, value / 5))
-
-                return (
-                  <div
-                    key={sample.id}
-                    className="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer group"
-                    style={{
-                      left: `${Math.max(5, Math.min(95, x))}%`,
-                      top: `${Math.max(5, Math.min(95, y))}%`,
-                    }}
-                  >
-                    <div
-                      className="rounded-full border-2 border-white shadow-lg transition-all duration-200 group-hover:scale-125"
-                      style={{
-                        backgroundColor: getRiskColor(sample.riskLevel || "Low"),
-                        width: `${size}px`,
-                        height: `${size}px`,
-                      }}
-                    />
-                    {/* Tooltip */}
-                    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                      {sample.sampleId}
-                      <br />
-                      {selectedMetal === "hpi" ? `HPI: ${value.toFixed(1)}` : `${value.toFixed(3)} mg/L`}
-                      <br />
-                      Risk: {sample.riskLevel}
-                    </div>
-                  </div>
-                )
-              })}
-
-              {/* Heatmap Overlay (if enabled) */}
-              {showHeatmap && (
-                <div className="absolute inset-0 pointer-events-none">
-                  {samples.map((sample, index) => {
-                    const x = 50 + (sample.longitude + 74.006) * 2000
-                    const y = 250 - (sample.latitude - 40.7128) * 2000
-                    const intensity = getMetalValue(sample, selectedMetal) / 100
+                  {samples.map((sample) => {
+                    const value = getMetalValue(sample, selectedMetal)
+                    const radius = Math.max(8, Math.min(25, selectedMetal === "hpi" ? value / 4 : value * 100))
 
                     return (
-                      <div
-                        key={`heatmap-${sample.id}`}
-                        className="absolute rounded-full"
-                        style={{
-                          left: `${Math.max(0, Math.min(100, x))}%`,
-                          top: `${Math.max(0, Math.min(100, y))}%`,
-                          width: "100px",
-                          height: "100px",
-                          background: `radial-gradient(circle, ${getRiskColor(sample.riskLevel || "Low")}${Math.round(
-                            intensity * 30,
-                          )
-                            .toString(16)
-                            .padStart(2, "0")} 0%, transparent 70%)`,
-                          transform: "translate(-50%, -50%)",
-                        }}
-                      />
+                      <CircleMarker
+                        key={sample.id}
+                        center={[sample.latitude, sample.longitude]}
+                        radius={radius}
+                        fillColor={getRiskColor(sample.riskLevel || "Low")}
+                        color="white"
+                        weight={2}
+                        opacity={1}
+                        fillOpacity={0.8}
+                      >
+                        <Popup>
+                          <div className="p-2">
+                            <h3 className="font-semibold">{sample.sampleId}</h3>
+                            <p className="text-sm">
+                              {selectedMetal === "hpi"
+                                ? `HPI: ${value.toFixed(1)}`
+                                : `${selectedMetal}: ${value.toFixed(3)} mg/L`}
+                            </p>
+                            <p className="text-sm">Risk Level: {sample.riskLevel}</p>
+                            <p className="text-sm">Depth: {sample.depth}m</p>
+                            <p className="text-sm">Date: {sample.collectionDate}</p>
+                          </div>
+                        </Popup>
+                      </CircleMarker>
                     )
                   })}
+                </MapContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center bg-gray-100 rounded-lg">
+                  <div className="text-center">
+                    <MapPin className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-gray-600 mb-2">No Sample Data</h3>
+                    <p className="text-gray-500">Add sample data to view locations on the map</p>
+                  </div>
                 </div>
               )}
-
-              {/* Map Legend */}
-              <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg p-3 shadow-lg">
-                <h4 className="text-sm font-semibold mb-2">Risk Levels</h4>
-                <div className="space-y-1">
-                  {["Low", "Moderate", "High", "Critical"].map((level) => (
-                    <div key={level} className="flex items-center gap-2 text-xs">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getRiskColor(level) }} />
-                      <span>{level}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Scale Bar */}
-              <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg p-2 shadow-lg">
-                <div className="text-xs text-gray-600 mb-1">Scale</div>
-                <div className="flex items-center gap-1">
-                  <div className="w-12 h-1 bg-black"></div>
-                  <span className="text-xs">1 km</span>
-                </div>
-              </div>
             </div>
           </CardContent>
         </Card>
@@ -340,7 +332,9 @@ export default function VisualizationPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {(samples.reduce((sum, s) => sum + getMetalValue(s, selectedMetal), 0) / samples.length).toFixed(2)}
+              {samples.length > 0
+                ? (samples.reduce((sum, s) => sum + getMetalValue(s, selectedMetal), 0) / samples.length).toFixed(2)
+                : "--"}
             </div>
             <p className="text-xs text-muted-foreground">
               {selectedMetal === "hpi" ? "Index value" : "mg/L concentration"}
@@ -353,52 +347,56 @@ export default function VisualizationPage() {
             <CardTitle className="text-sm font-medium">Coverage Area</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">12.5</div>
+            <div className="text-2xl font-bold">{samples.length > 0 ? (samples.length * 0.5).toFixed(1) : "--"}</div>
             <p className="text-xs text-muted-foreground">km² surveyed</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Sample Details */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Sample Locations</CardTitle>
-          <CardDescription>Detailed information for all mapped samples</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {samples.slice(0, 10).map((sample) => (
-              <div key={sample.id} className="flex items-center justify-between p-3 border rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-4 h-4 rounded-full"
-                    style={{ backgroundColor: getRiskColor(sample.riskLevel || "Low") }}
-                  />
-                  <div>
-                    <p className="font-medium">{sample.sampleId}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {sample.latitude.toFixed(4)}, {sample.longitude.toFixed(4)}
+      {samples.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Sample Locations</CardTitle>
+            <CardDescription>Detailed information for all mapped samples</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {samples.slice(0, 10).map((sample) => (
+                <div key={sample.id} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-4 h-4 rounded-full"
+                      style={{ backgroundColor: getRiskColor(sample.riskLevel || "Low") }}
+                    />
+                    <div>
+                      <p className="font-medium">{sample.sampleId}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {sample.latitude.toFixed(4)}, {sample.longitude.toFixed(4)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <Badge style={{ backgroundColor: getRiskColor(sample.riskLevel || "Low"), color: "white" }}>
+                      {sample.riskLevel}
+                    </Badge>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {selectedMetal === "hpi"
+                        ? `HPI: ${sample.hpi?.toFixed(1)}`
+                        : `${getMetalValue(sample, selectedMetal).toFixed(3)} mg/L`}
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <Badge className={`${getRiskColor(sample.riskLevel || "Low")} text-white`}>{sample.riskLevel}</Badge>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {selectedMetal === "hpi"
-                      ? `HPI: ${sample.hpi?.toFixed(1)}`
-                      : `${getMetalValue(sample, selectedMetal).toFixed(3)} mg/L`}
-                  </p>
+              ))}
+              {samples.length > 10 && (
+                <div className="text-center pt-2">
+                  <Button variant="outline">View All {samples.length} Samples</Button>
                 </div>
-              </div>
-            ))}
-            {samples.length > 10 && (
-              <div className="text-center pt-2">
-                <Button variant="outline">View All {samples.length} Samples</Button>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
