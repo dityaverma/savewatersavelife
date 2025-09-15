@@ -17,9 +17,11 @@ interface SampleData {
   depth: number
   collectionDate: string
   metals: {
+    arsenic: number // Updated to match document standards
     lead: number
     cadmium: number
     chromium: number
+    mercury: number
     copper: number
     zinc: number
     iron: number
@@ -31,7 +33,7 @@ interface SampleData {
 interface CalculationResults {
   sampleId: string
   hpi: number
-  mi: number
+  mpi: number // Changed from mi to mpi (Metal Pollution Index)
   hei: number
   cf: { [key: string]: number }
   pli: number
@@ -39,11 +41,12 @@ interface CalculationResults {
   riskLevel: "Low" | "Moderate" | "High" | "Critical"
 }
 
-// WHO/EPA standard values for heavy metals in drinking water (mg/L)
 const standards = {
+  arsenic: 0.01,
   lead: 0.01,
   cadmium: 0.003,
   chromium: 0.05,
+  mercury: 0.001,
   copper: 2.0,
   zinc: 3.0,
   iron: 0.3,
@@ -51,16 +54,17 @@ const standards = {
   nickel: 0.07,
 }
 
-// Weights for HPI calculation
-const weights = {
-  lead: 0.25,
-  cadmium: 0.25,
-  chromium: 0.15,
-  copper: 0.1,
-  zinc: 0.05,
-  iron: 0.1,
-  manganese: 0.05,
-  nickel: 0.05,
+const idealValues = {
+  arsenic: 0,
+  lead: 0,
+  cadmium: 0,
+  chromium: 0,
+  mercury: 0,
+  copper: 0,
+  zinc: 0,
+  iron: 0,
+  manganese: 0,
+  nickel: 0,
 }
 
 export default function CalculationsPage() {
@@ -69,52 +73,41 @@ export default function CalculationsPage() {
   const [isCalculating, setIsCalculating] = useState(false)
 
   useEffect(() => {
-    // Always clear sample data on first load to ensure sample count is 0
-    localStorage.removeItem("sampleData");
-    const storedSamples = localStorage.getItem("sampleData");
+    const storedSamples = localStorage.getItem("sampleData")
     if (storedSamples) {
-      setSamples(JSON.parse(storedSamples));
+      setSamples(JSON.parse(storedSamples))
     } else {
-      setSamples([]);
+      setSamples([])
     }
   }, [])
 
   const calculateHPI = (metals: any): number => {
-    let weightedSum = 0
-    let totalWeight = 0
+    let numerator = 0
+    let denominator = 0
 
     Object.entries(metals).forEach(([metal, concentration]) => {
       const standard = standards[metal as keyof typeof standards]
-      const weight = weights[metal as keyof typeof weights]
-      const qi = ((concentration as number) / standard) * 100
-      weightedSum += weight * qi
-      totalWeight += weight
+      const ideal = idealValues[metal as keyof typeof idealValues]
+      const weight = 1 / standard // Wi = 1/Si as per document
+
+      const qi = (((concentration as number) - ideal) / (standard - ideal)) * 100
+      numerator += weight * qi
+      denominator += weight
     })
 
-    return weightedSum / totalWeight
+    return numerator / denominator
   }
 
-  const calculateMI = (metals: any): number => {
-    const concentrations = Object.values(metals) as number[]
-    const standardValues = Object.values(standards)
-
-    let sum = 0
-    concentrations.forEach((conc, index) => {
-      sum += conc / standardValues[index]
-    })
-
-    return sum / concentrations.length
+  const calculateMPI = (cf: { [key: string]: number }): number => {
+    const values = Object.values(cf)
+    const product = values.reduce((acc, val) => acc * val, 1)
+    return Math.pow(product, 1 / values.length)
   }
 
-  const calculateHEI = (metals: any): number => {
-    let sum = 0
-    Object.entries(metals).forEach(([metal, concentration]) => {
-      const standard = standards[metal as keyof typeof standards]
-      sum += (concentration as number) / standard
-    })
-    return sum
+  const calculateHEI = (cf: { [key: string]: number }): number => {
+    return Object.values(cf).reduce((sum, val) => sum + val, 0)
   }
-  
+
   const calculateCF = (metals: any): { [key: string]: number } => {
     const cf: { [key: string]: number } = {}
     Object.entries(metals).forEach(([metal, concentration]) => {
@@ -131,18 +124,15 @@ export default function CalculationsPage() {
   }
 
   const getClassification = (hpi: number): string => {
-    if (hpi < 25) return "Excellent"
-    if (hpi < 50) return "Good"
-    if (hpi < 75) return "Poor"
-    if (hpi < 100) return "Very Poor"
+    if (hpi < 50) return "Excellent"
+    if (hpi < 100) return "Slightly Polluted"
     return "Unsuitable for Drinking"
   }
 
   const getRiskLevel = (hpi: number): "Low" | "Moderate" | "High" | "Critical" => {
-    if (hpi < 25) return "Low"
-    if (hpi < 50) return "Moderate"
-    if (hpi < 100) return "High"
-    return "Critical"
+    if (hpi < 50) return "Low"
+    if (hpi < 100) return "Moderate"
+    return "High"
   }
 
   const performCalculations = async () => {
@@ -152,16 +142,16 @@ export default function CalculationsPage() {
     await new Promise((resolve) => setTimeout(resolve, 2000))
 
     const calculationResults: CalculationResults[] = samples.map((sample) => {
-      const hpi = calculateHPI(sample.metals)
-      const mi = calculateMI(sample.metals)
-      const hei = calculateHEI(sample.metals)
       const cf = calculateCF(sample.metals)
+      const hpi = calculateHPI(sample.metals)
+      const mpi = calculateMPI(cf)
+      const hei = calculateHEI(cf)
       const pli = calculatePLI(cf)
 
       return {
         sampleId: sample.sampleId,
         hpi: Math.round(hpi * 100) / 100,
-        mi: Math.round(mi * 100) / 100,
+        mpi: Math.round(mpi * 100) / 100,
         hei: Math.round(hei * 100) / 100,
         cf,
         pli: Math.round(pli * 100) / 100,
@@ -171,6 +161,7 @@ export default function CalculationsPage() {
     })
 
     setResults(calculationResults)
+    localStorage.setItem("calculationResults", JSON.stringify(calculationResults))
     setIsCalculating(false)
   }
 
@@ -254,7 +245,7 @@ export default function CalculationsPage() {
             <div className="text-center space-y-4">
               <Calculator className="h-8 w-8 text-primary mx-auto animate-pulse" />
               <h3 className="text-lg font-semibold">Calculating Pollution Indices</h3>
-              <p className="text-muted-foreground">Computing HPI, MI, HEI, CF, and PLI values...</p>
+              <p className="text-muted-foreground">Computing HPI, MPI, HEI, CF, and PLI values...</p>
               <Progress value={66} className="w-full max-w-md mx-auto" />
             </div>
           </CardContent>
@@ -279,10 +270,12 @@ export default function CalculationsPage() {
                   <div className="text-2xl font-bold">
                     {results.length > 0
                       ? (() => {
-                          const valid = results.map(r => r.hpi).filter(hpi => typeof hpi === "number" && !isNaN(hpi));
+                          const valid = results
+                            .map((r) => r.hpi)
+                            .filter((hpi) => typeof hpi === "number" && !isNaN(hpi))
                           return valid.length > 0
                             ? Math.round((valid.reduce((sum, hpi) => sum + hpi, 0) / valid.length) * 100) / 100
-                            : "--";
+                            : "--"
                         })()
                       : "--"}
                   </div>
@@ -292,14 +285,14 @@ export default function CalculationsPage() {
 
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Critical Sites</CardTitle>
+                  <CardTitle className="text-sm font-medium">High Risk Sites</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-destructive">
                     {results.length > 0
                       ? (() => {
-                          const valid = results.filter(r => r.riskLevel === "Critical");
-                          return typeof valid.length === "number" && !isNaN(valid.length) ? valid.length : "--";
+                          const valid = results.filter((r) => r.riskLevel === "High")
+                          return typeof valid.length === "number" && !isNaN(valid.length) ? valid.length : "--"
                         })()
                       : "--"}
                   </div>
@@ -309,14 +302,14 @@ export default function CalculationsPage() {
 
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">High Risk Sites</CardTitle>
+                  <CardTitle className="text-sm font-medium">Moderate Risk Sites</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-orange-600">
                     {results.length > 0
                       ? (() => {
-                          const valid = results.filter(r => r.riskLevel === "High");
-                          return typeof valid.length === "number" && !isNaN(valid.length) ? valid.length : "--";
+                          const valid = results.filter((r) => r.riskLevel === "Moderate")
+                          return typeof valid.length === "number" && !isNaN(valid.length) ? valid.length : "--"
                         })()
                       : "--"}
                   </div>
@@ -332,8 +325,8 @@ export default function CalculationsPage() {
                   <div className="text-2xl font-bold text-green-600">
                     {results.length > 0
                       ? (() => {
-                          const valid = results.filter(r => r.riskLevel === "Low");
-                          return typeof valid.length === "number" && !isNaN(valid.length) ? valid.length : "--";
+                          const valid = results.filter((r) => r.riskLevel === "Low")
+                          return typeof valid.length === "number" && !isNaN(valid.length) ? valid.length : "--"
                         })()
                       : "--"}
                   </div>
@@ -388,8 +381,8 @@ export default function CalculationsPage() {
                         <div className="text-sm text-muted-foreground">HPI</div>
                       </div>
                       <div className="text-center p-3 bg-muted/50 rounded-lg">
-                        <div className="text-2xl font-bold">{result.mi}</div>
-                        <div className="text-sm text-muted-foreground">MI</div>
+                        <div className="text-2xl font-bold">{result.mpi}</div>
+                        <div className="text-sm text-muted-foreground">MPI</div>
                       </div>
                       <div className="text-center p-3 bg-muted/50 rounded-lg">
                         <div className="text-2xl font-bold">{result.hei}</div>
@@ -402,6 +395,21 @@ export default function CalculationsPage() {
                       <div className="text-center p-3 bg-muted/50 rounded-lg">
                         <div className="text-sm font-medium">{result.classification}</div>
                         <div className="text-sm text-muted-foreground">Quality</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <h4 className="text-sm font-medium mb-2">Contamination Factors (CF)</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+                        {Object.entries(result.cf).map(([metal, cf]) => (
+                          <div
+                            key={metal}
+                            className={`p-2 rounded text-center ${cf > 1 ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}`}
+                          >
+                            <div className="font-medium">{metal.toUpperCase()}</div>
+                            <div>{cf.toFixed(3)}</div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </CardContent>
@@ -419,20 +427,12 @@ export default function CalculationsPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
-                    <span className="font-medium">0 - 25</span>
+                    <span className="font-medium">&lt; 50</span>
                     <Badge className="bg-green-100 text-green-800">Excellent</Badge>
                   </div>
-                  <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <span className="font-medium">25 - 50</span>
-                    <Badge className="bg-blue-100 text-blue-800">Good</Badge>
-                  </div>
                   <div className="flex items-center justify-between p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                    <span className="font-medium">50 - 75</span>
-                    <Badge className="bg-yellow-100 text-yellow-800">Poor</Badge>
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                    <span className="font-medium">75 - 100</span>
-                    <Badge className="bg-orange-100 text-orange-800">Very Poor</Badge>
+                    <span className="font-medium">50 - 100</span>
+                    <Badge className="bg-yellow-100 text-yellow-800">Slightly Polluted</Badge>
                   </div>
                   <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg">
                     <span className="font-medium">&gt; 100</span>
@@ -443,37 +443,25 @@ export default function CalculationsPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Risk Assessment</CardTitle>
-                  <CardDescription>Health risk levels based on contamination</CardDescription>
+                  <CardTitle>Index Interpretations</CardTitle>
+                  <CardDescription>Understanding pollution indices</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <CheckCircle className="h-4 w-4 text-green-600" />
-                      <span className="font-medium">Low Risk</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground">Safe for consumption</p>
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="font-medium mb-1">PLI (Pollution Load Index)</div>
+                    <p className="text-sm text-muted-foreground">
+                      PLI &gt; 1: Overall pollution; PLI &lt; 1: No net pollution
+                    </p>
                   </div>
-                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Info className="h-4 w-4 text-yellow-600" />
-                      <span className="font-medium">Moderate Risk</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground">Regular monitoring recommended</p>
+                  <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                    <div className="font-medium mb-1">CF (Contamination Factor)</div>
+                    <p className="text-sm text-muted-foreground">
+                      CF &gt; 1: Exceeds standard; CF &lt; 1: Within limits
+                    </p>
                   </div>
                   <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <AlertTriangle className="h-4 w-4 text-orange-600" />
-                      <span className="font-medium">High Risk</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground">Treatment required before use</p>
-                  </div>
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <div className="flex items-center gap-2 mb-1">
-                      <AlertTriangle className="h-4 w-4 text-red-600" />
-                      <span className="font-medium">Critical Risk</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground">Immediate action required</p>
+                    <div className="font-medium mb-1">HEI (Heavy Metal Evaluation Index)</div>
+                    <p className="text-sm text-muted-foreground">Sum of contamination factors for all metals</p>
                   </div>
                 </CardContent>
               </Card>
