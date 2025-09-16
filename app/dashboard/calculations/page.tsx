@@ -17,7 +17,7 @@ interface SampleData {
   depth: number
   collectionDate: string
   metals: {
-    arsenic: number // Updated to match document standards
+    arsenic: number
     lead: number
     cadmium: number
     chromium: number
@@ -33,7 +33,7 @@ interface SampleData {
 interface CalculationResults {
   sampleId: string
   hpi: number
-  mpi: number // Changed from mi to mpi (Metal Pollution Index)
+  mpi: number
   hei: number
   cf: { [key: string]: number }
   pli: number
@@ -67,6 +67,20 @@ const idealValues = {
   nickel: 0,
 }
 
+const calculateWeights = () => {
+  const weightSum = Object.values(standards)
+    .filter(s => s !== 0)
+    .reduce((acc, s) => acc + 1 / s, 0)
+
+  const weights: { [key: string]: number } = {}
+  Object.entries(standards).forEach(([metal, s]) => {
+    if (s !== 0) {
+      weights[metal] = (1 / s) / weightSum
+    }
+  })
+  return weights
+}
+
 export default function CalculationsPage() {
   const [samples, setSamples] = useState<SampleData[]>([])
   const [results, setResults] = useState<CalculationResults[]>([])
@@ -81,46 +95,49 @@ export default function CalculationsPage() {
     }
   }, [])
 
-  const calculateHPI = (metals: any): number => {
-    let numerator = 0
-    let denominator = 0
+  const calculateCF = (metals: any): { [key: string]: number } => {
+    const MAX_CF = 100
+    const cf: { [key: string]: number } = {}
+    Object.entries(metals).forEach(([metal, concentration]) => {
+      const standard = standards[metal as keyof typeof standards]
+      if (standard !== 0) {
+        cf[metal] = parseFloat(Math.min((concentration as number) / standard, MAX_CF).toFixed(3))
+      }
+    })
+    return cf
+  }
 
+  const calculateHPI = (metals: any): number => {
+    const weights = calculateWeights()
+    let hpiNumerator = 0
+    let hpiDenominator = 0
     Object.entries(metals).forEach(([metal, concentration]) => {
       const standard = standards[metal as keyof typeof standards]
       const ideal = idealValues[metal as keyof typeof idealValues]
-      const weight = 1 / standard // Wi = 1/Si as per document
-
-      const qi = (((concentration as number) - ideal) / (standard - ideal)) * 100
-      numerator += weight * qi
-      denominator += weight
+      if (typeof standard === "number" && standard !== 0 && typeof concentration === "number") {
+        const qi = Math.abs(((concentration - ideal) / (standard - ideal)) * 100)
+        const cappedQi = Math.min(qi, 500)
+        hpiNumerator += weights[metal] * cappedQi
+        hpiDenominator += weights[metal]
+      }
     })
-
-    return numerator / denominator
+    return hpiDenominator === 0 ? 0 : parseFloat((hpiNumerator / hpiDenominator).toFixed(3))
   }
 
   const calculateMPI = (cf: { [key: string]: number }): number => {
     const values = Object.values(cf)
     const product = values.reduce((acc, val) => acc * val, 1)
-    return Math.pow(product, 1 / values.length)
+    return parseFloat(Math.pow(product, 1 / values.length).toFixed(3))
   }
 
   const calculateHEI = (cf: { [key: string]: number }): number => {
-    return Object.values(cf).reduce((sum, val) => sum + val, 0)
-  }
-
-  const calculateCF = (metals: any): { [key: string]: number } => {
-    const cf: { [key: string]: number } = {}
-    Object.entries(metals).forEach(([metal, concentration]) => {
-      const standard = standards[metal as keyof typeof standards]
-      cf[metal] = (concentration as number) / standard
-    })
-    return cf
+    return parseFloat(Object.values(cf).reduce((sum, val) => sum + val, 0).toFixed(3))
   }
 
   const calculatePLI = (cf: { [key: string]: number }): number => {
     const values = Object.values(cf)
     const product = values.reduce((acc, val) => acc * val, 1)
-    return Math.pow(product, 1 / values.length)
+    return parseFloat(Math.pow(product, 1 / values.length).toFixed(3))
   }
 
   const getClassification = (hpi: number): string => {
@@ -132,14 +149,13 @@ export default function CalculationsPage() {
   const getRiskLevel = (hpi: number): "Low" | "Moderate" | "High" | "Critical" => {
     if (hpi < 50) return "Low"
     if (hpi < 100) return "Moderate"
-    return "High"
+    if (hpi < 200) return "High"
+    return "Critical"
   }
 
   const performCalculations = async () => {
     setIsCalculating(true)
-
-    // Simulate calculation time
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    await new Promise((resolve) => setTimeout(resolve, 1000))
 
     const calculationResults: CalculationResults[] = samples.map((sample) => {
       const cf = calculateCF(sample.metals)
@@ -150,11 +166,11 @@ export default function CalculationsPage() {
 
       return {
         sampleId: sample.sampleId,
-        hpi: Math.round(hpi * 100) / 100,
-        mpi: Math.round(mpi * 100) / 100,
-        hei: Math.round(hei * 100) / 100,
+        hpi: parseFloat(hpi.toFixed(3)),
+        mpi: parseFloat(mpi.toFixed(3)),
+        hei: parseFloat(hei.toFixed(3)),
         cf,
-        pli: Math.round(pli * 100) / 100,
+        pli: parseFloat(pli.toFixed(3)),
         classification: getClassification(hpi),
         riskLevel: getRiskLevel(hpi),
       }
@@ -172,7 +188,6 @@ export default function CalculationsPage() {
       case "Moderate":
         return "bg-yellow-100 text-yellow-800"
       case "High":
-        return "bg-orange-100 text-orange-800"
       case "Critical":
         return "bg-red-100 text-red-800"
       default:
@@ -194,6 +209,21 @@ export default function CalculationsPage() {
     }
   }
 
+  // ✅ FIXED calculateAverage with proper TypeScript type guard
+  const calculateAverage = (key: keyof CalculationResults): string => {
+    if (results.length === 0) return "--"
+
+    const values = results
+      .map((r) => r[key])
+      .filter((val): val is number => typeof val === "number" && !isNaN(val))
+
+    if (values.length === 0) return "--"
+
+    const sum = values.reduce((total, val) => total + val, 0)
+    const avg = sum / values.length
+    return avg.toFixed(3)
+  }
+
   if (samples.length === 0) {
     return (
       <div className="space-y-6">
@@ -201,7 +231,6 @@ export default function CalculationsPage() {
           <h1 className="text-3xl font-bold">Calculations</h1>
           <p className="text-muted-foreground">Calculate pollution indices for your groundwater samples</p>
         </div>
-
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Calculator className="h-12 w-12 text-muted-foreground mb-4" />
@@ -267,100 +296,38 @@ export default function CalculationsPage() {
                   <CardTitle className="text-sm font-medium">Average HPI</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">
-                    {results.length > 0
-                      ? (() => {
-                          const valid = results
-                            .map((r) => r.hpi)
-                            .filter((hpi) => typeof hpi === "number" && !isNaN(hpi))
-                          return valid.length > 0
-                            ? Math.round((valid.reduce((sum, hpi) => sum + hpi, 0) / valid.length) * 100) / 100
-                            : "--"
-                        })()
-                      : "--"}
-                  </div>
+                  <div className="text-2xl font-bold">{calculateAverage("hpi")}</div>
                   <p className="text-xs text-muted-foreground">Heavy Metal Pollution Index</p>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">High Risk Sites</CardTitle>
+                  <CardTitle className="text-sm font-medium">Average MPI</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-destructive">
-                    {results.length > 0
-                      ? (() => {
-                          const valid = results.filter((r) => r.riskLevel === "High")
-                          return typeof valid.length === "number" && !isNaN(valid.length) ? valid.length : "--"
-                        })()
-                      : "--"}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Require immediate attention</p>
+                  <div className="text-2xl font-bold">{calculateAverage("mpi")}</div>
+                  <p className="text-xs text-muted-foreground">Metal Pollution Index</p>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Moderate Risk Sites</CardTitle>
+                  <CardTitle className="text-sm font-medium">Average HEI</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-orange-600">
-                    {results.length > 0
-                      ? (() => {
-                          const valid = results.filter((r) => r.riskLevel === "Moderate")
-                          return typeof valid.length === "number" && !isNaN(valid.length) ? valid.length : "--"
-                        })()
-                      : "--"}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Need monitoring</p>
+                  <div className="text-2xl font-bold">{calculateAverage("hei")}</div>
+                  <p className="text-xs text-muted-foreground">Heavy Metal Evaluation Index</p>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Safe Sites</CardTitle>
+                  <CardTitle className="text-sm font-medium">Average PLI</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-green-600">
-                    {results.length > 0
-                      ? (() => {
-                          const valid = results.filter((r) => r.riskLevel === "Low")
-                          return typeof valid.length === "number" && !isNaN(valid.length) ? valid.length : "--"
-                        })()
-                      : "--"}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Within acceptable limits</p>
+                  <div className="text-2xl font-bold">{calculateAverage("pli")}</div>
+                  <p className="text-xs text-muted-foreground">Pollution Load Index</p>
                 </CardContent>
               </Card>
             </div>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Sample Results Summary</CardTitle>
-                <CardDescription>Quick overview of all calculated indices</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {results.map((result) => (
-                    <div key={result.sampleId} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-full ${getRiskColor(result.riskLevel)}`}>
-                          {getRiskIcon(result.riskLevel)}
-                        </div>
-                        <div>
-                          <p className="font-medium">{result.sampleId}</p>
-                          <p className="text-sm text-muted-foreground">
-                            HPI: {result.hpi} • Classification: {result.classification}
-                          </p>
-                        </div>
-                      </div>
-                      <Badge className={getRiskColor(result.riskLevel)}>{result.riskLevel} Risk</Badge>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
           </TabsContent>
 
           <TabsContent value="detailed" className="space-y-6">
@@ -375,7 +342,7 @@ export default function CalculationsPage() {
                     <CardDescription>Detailed pollution index calculations</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                       <div className="text-center p-3 bg-muted/50 rounded-lg">
                         <div className="text-2xl font-bold">{result.hpi}</div>
                         <div className="text-sm text-muted-foreground">HPI</div>
@@ -391,10 +358,6 @@ export default function CalculationsPage() {
                       <div className="text-center p-3 bg-muted/50 rounded-lg">
                         <div className="text-2xl font-bold">{result.pli}</div>
                         <div className="text-sm text-muted-foreground">PLI</div>
-                      </div>
-                      <div className="text-center p-3 bg-muted/50 rounded-lg">
-                        <div className="text-sm font-medium">{result.classification}</div>
-                        <div className="text-sm text-muted-foreground">Quality</div>
                       </div>
                     </div>
 
@@ -440,7 +403,6 @@ export default function CalculationsPage() {
                   </div>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardHeader>
                   <CardTitle>Index Interpretations</CardTitle>
